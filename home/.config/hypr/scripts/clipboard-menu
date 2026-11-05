@@ -1,0 +1,60 @@
+#!/usr/bin/python
+"""Styled clipboard picker; IDs and clipboard bytes are kept unchanged."""
+import os
+from pathlib import Path
+import subprocess
+
+THEMES = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'rofi/everforest'
+
+def run(*args, **kwargs):
+    return subprocess.run(args, capture_output=True, **kwargs)
+
+def confirm_clear():
+    result = run('rofi', '-no-config', '-theme', str(THEMES / 'confirm.rasi'),
+                 '-dmenu', '-sync', '-no-custom', '-format', 'i', '-mesg',
+                 'Remove all saved clipboard entries?', input=b'Cancel\nClear history\n')
+    return result.returncode == 0 and result.stdout.strip() == b'1'
+
+def main():
+    while True:
+        result = run('cliphist', 'list')
+        if result.returncode:
+            return
+        entries = result.stdout.splitlines()
+        rows = []
+        for entry in entries:
+            preview = entry.partition(b'\t')[2].decode('utf-8', errors='replace')
+            preview = preview.replace('\x00', '').replace('\x1f', ' ')
+            icon = 'image-x-generic' if 'binary data' in preview.lower() else 'edit-paste'
+            rows.append(preview + '\x00icon\x1f' + icon)
+        args = ['rofi', '-no-config', '-theme', str(THEMES / 'clipboard.rasi'),
+                '-dmenu', '-sync', '-i', '-no-custom', '-format', 'i', '-show-icons', '-p', '󰅌',
+                '-kb-custom-1', 'Control-Delete', '-kb-custom-2', 'Alt-Delete',
+                '-kb-remove-word-forward', 'Control+Alt+d',
+                '-theme-str', f'textbox-badge {{ content: "{len(entries)} ITEMS"; }}']
+        if not entries:
+            args += ['-mesg', 'Your clipboard history is empty. Copy text or an image to get started.']
+        choice = run(*args, input='\n'.join(rows).encode())
+        if choice.returncode == 11:
+            if confirm_clear():
+                run('cliphist', 'wipe')
+            continue
+        if choice.returncode not in (0, 10):
+            return
+        try:
+            index = int(choice.stdout.strip())
+            if not 0 <= index < len(entries):
+                return
+        except ValueError:
+            return
+        entry = entries[index] + b'\n'
+        if choice.returncode == 10:
+            run('cliphist', 'delete', input=entry)
+            continue
+        decoded = run('cliphist', 'decode', input=entry)
+        if decoded.returncode == 0:
+            run('wl-copy', input=decoded.stdout)
+        return
+
+if __name__ == '__main__':
+    main()

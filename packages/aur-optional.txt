@@ -1,0 +1,3 @@
+# Optional; the active GTK theme is already bundled.
+everforest-gtk-theme-git
+gtk-engine-murrine

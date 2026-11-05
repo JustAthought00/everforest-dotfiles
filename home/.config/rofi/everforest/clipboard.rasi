@@ -1,0 +1,11 @@
+@import "base.rasi"
+window { width: 820px;
+    }
+listview { lines: 7;
+    }
+textbox-help { content: "Enter  Copy     ·     Ctrl + Delete  Remove     ·     Alt + Delete  Clear all     ·     Esc  Close";
+    }
+
+textbox-heading {
+    content: "<b>Clipboard history</b>&#10;<span size='small' foreground='#9da9a0'>Select an item, then paste it into your app</span>";
+}

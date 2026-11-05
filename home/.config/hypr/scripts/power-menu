@@ -1,0 +1,56 @@
+#!/usr/bin/python
+"""Everforest power cards with explicit confirmation for ending a session."""
+import html
+import os
+from pathlib import Path
+import subprocess
+
+THEMES = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'rofi/everforest'
+
+def menu(rows, theme, message=None, markup=False):
+    args = ['rofi', '-no-config', '-theme', str(THEMES / (theme + '.rasi')),
+            '-dmenu', '-sync', '-no-custom', '-format', 'i',
+            '-kb-row-left', 'Left', '-kb-row-right', 'Right',
+            '-kb-move-char-back', 'Control+b', '-kb-move-char-forward', 'Control+f']
+    if message:
+        args += ['-mesg', message]
+    if markup:
+        args += ['-markup-rows']
+    result = subprocess.run(args, input='\n'.join(rows), text=True, capture_output=True)
+    if result.returncode:
+        return None
+    try:
+        index = int(result.stdout.strip())
+        return index if 0 <= index < len(rows) else None
+    except ValueError:
+        return None
+
+def main():
+    actions = [
+        ('', 'Lock', 'Secure your screen', ['loginctl', 'lock-session']),
+        ('󰤄', 'Suspend', 'Take a break', ['systemctl', 'suspend']),
+        ('󰍃', 'Log out', 'End this session', ['hyprctl', 'dispatch', 'hl.dsp.exit()']),
+        ('󰜉', 'Restart', 'Start fresh', ['systemctl', 'reboot']),
+        ('', 'Shut down', 'Power off', ['systemctl', 'poweroff']),
+    ]
+    rows = []
+    for icon, title, subtitle, _ in actions:
+        colour = '#e67e80' if title == 'Shut down' else '#a7c080'
+        rows.append(f'<span font="JetBrainsMono Nerd Font 38" foreground="{colour}">{icon}</span>'
+                    f'\r<span font="Adwaita Sans Bold 13">{html.escape(title)}</span>'
+                    f'\r<span font="Adwaita Sans 10" foreground="#9da9a0">{html.escape(subtitle)}</span>')
+    # Keep one record per card; Pango expands the newline entities inside it.
+    rows = [row.replace('\r', '&#10;') for row in rows]
+    chosen = menu(rows, 'power', markup=True)
+    if chosen is None:
+        return
+    _, title, _, command = actions[chosen]
+    if chosen >= 2:
+        if menu(['Cancel', 'Confirm'], 'confirm', f'{title}? Save your work before continuing.') != 1:
+            return
+    result = subprocess.run(command)
+    if result.returncode:
+        subprocess.run(['notify-send', 'Power menu', 'The requested action could not be completed.'])
+
+if __name__ == '__main__':
+    main()

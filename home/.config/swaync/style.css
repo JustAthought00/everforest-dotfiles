@@ -1,0 +1,10 @@
+@import 'colors/everforest.css';
+@import 'themes/nova-dark/notifications.css';
+@import 'themes/nova-dark/central_control.css';
+
+/* Button icons and compact spacing for two rows of five. */
+.widget-buttons-grid > flowbox > flowboxchild > button {
+  font-family: "JetBrainsMono Nerd Font";
+  margin: 4px;
+  padding: 6px 10px;
+}

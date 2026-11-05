@@ -1,0 +1,133 @@
+@import "colors/evergreen.css";
+@define-color bg       alpha(@bg0, 0.85);@define-color bg-alt   @bg1;@define-color surface  @bg2;@define-color border   @bg4;@define-color muted    @grey1;@define-color accent   @green;@define-color warning  @yellow;@define-color critical @red;
+*{
+    font-family: "JetBrainsMono Nerd Font", sans-serif;
+    font-size: 13px;
+    border: none;
+    border-radius: 0;
+    min-height: 0;
+}
+
+window#waybar {
+    background: transparent;
+    color: @fg;
+}
+
+/* ===== Module pills ===== */
+#clock,
+#workspaces,
+#tray,
+#pulseaudio,
+#bluetooth,
+#network,
+#battery,
+#custom-notification {
+    padding: 0 12px;
+    margin: 0 4px;
+    background: @bg;
+    color: @fg;
+    border: 1px solid @border;
+    border-radius: 10px;
+}
+
+/* ===== Workspaces ===== */
+#workspaces {
+    padding: 0 4px;
+}
+
+#workspaces button {
+    padding: 0 8px;
+    margin: 3px 2px;
+    color: @muted;
+    background: transparent;
+    border-radius: 6px;
+}
+
+#workspaces button:hover {
+    background: @surface;
+    color: @fg;
+}
+
+#workspaces button.active,
+#workspaces button.focused {
+    color: @bg-alt;
+    background: @accent;
+}
+
+#workspaces button.urgent {
+    color: @bg-alt;
+    background: @critical;
+}
+
+/* ===== Clock ===== */
+#clock {
+    color: @accent;
+    font-weight: bold;
+}
+
+/* ===== Network ===== */
+#network.disconnected {
+    color: @critical;
+}
+
+/* ===== Pulseaudio ===== */
+#pulseaudio.muted,
+#pulseaudio.source-muted {
+    color: @muted;
+}
+
+/* ===== Battery ===== */
+#battery.charging {
+    color: @accent;
+}
+
+#battery.warning:not(.charging) {
+    color: @warning;
+}
+
+#battery.critical:not(.charging) {
+    color: @critical;
+}
+
+/* ===== Notification (swaync) ===== */
+#custom-notification {
+    color: @fg;
+}
+
+#custom-notification.notification {
+    color: @accent;
+}
+
+#custom-notification.dnd-none,
+#custom-notification.dnd-notification,
+#custom-notification.inhibited-none,
+#custom-notification.inhibited-notification,
+#custom-notification.dnd-inhibited-none,
+#custom-notification.dnd-inhibited-notification {
+    color: @muted;
+}
+
+/* ===== Tray ===== */
+#tray>.passive {
+    -gtk-icon-effect: dim;
+}
+
+#tray>.needs-attention {
+    background: @critical;
+    border-radius: 8px;
+}
+
+/* ===== Tooltips ===== */
+tooltip {
+    background: @bg-alt;
+    border: 1px solid @border;
+    border-radius: 8px;
+}
+
+tooltip label {
+    color: @fg;
+}
+/* Bluetooth device battery, separate from output volume. */
+#bluetooth.connected {
+    color: @accent;
+}

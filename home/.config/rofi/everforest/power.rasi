@@ -1,0 +1,30 @@
+@import "base.rasi"
+configuration { show-icons: false;
+    }
+window { width: 1040px;
+    }
+mainbox { children: [ "header", "listview", "textbox-help" ];
+    spacing: 26px;
+    padding: 30px;
+    }
+listview { columns: 5;
+    lines: 1;
+    layout: vertical;
+    spacing: 12px;
+    fixed-columns: true;
+    }
+element { padding: 30px 6px;
+    }
+element-text { horizontal-align: 0.5;
+    vertical-align: 0.5;
+    }
+textbox-help { content: "← / →  Choose     ·     Enter  Select     ·     Esc  Close";
+    }
+
+element { children: [ "element-text" ]; }
+
+textbox-heading {
+    content: "<b>Session controls</b>&#10;<span size='small' foreground='#9da9a0'>Lock, take a break, or end your session</span>";
+}
+
+configuration { eh: 7; }

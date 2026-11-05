@@ -1,0 +1,27 @@
+@import "base.rasi"
+window { width: 1060px;
+    }
+entry { placeholder: "Search wallpapers…";
+    }
+listview { columns: 3;
+    lines: 2;
+    spacing: 14px;
+    fixed-columns: true;
+    }
+element { orientation: vertical;
+    padding: 10px;
+    spacing: 10px;
+    }
+element-icon { size: 154px;
+    horizontal-align: 0.5;
+    }
+element-text { horizontal-align: 0.5;
+    font: "Adwaita Sans 11";
+    }
+textbox-help { content: "Enter  Apply     ·     Ctrl + R  Random wallpaper     ·     Esc  Close";
+    }
+element-icon { size: 180px; }
+
+textbox-heading {
+    content: "<b>Wallpaper gallery</b>&#10;<span size='small' foreground='#9da9a0'>Choose a backdrop for your desktop</span>";
+}

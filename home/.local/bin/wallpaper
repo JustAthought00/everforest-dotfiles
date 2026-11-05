@@ -1,0 +1,104 @@
+#!/usr/bin/python
+"""Choose a wallpaper with Rofi, or pass an image path / --random."""
+import argparse
+import os
+from pathlib import Path
+import random
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = Path.home()
+EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'}
+
+def run(*args, **kwargs):
+    return subprocess.run(args, text=True, capture_output=True, **kwargs)
+
+def images():
+    data = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share'))
+    roots = [data / 'wallpapers', HOME / 'Pictures/Wallpapers', HOME / 'Wallpapers']
+    found = set()
+    for root in roots:
+        if root.is_dir():
+            for file in root.rglob('*'):
+                if file.is_file() and file.suffix.lower() in EXTENSIONS:
+                    found.add(file.resolve())
+    # Include the current image even if it lives outside a wallpaper folder.
+    current = run('awww', 'query')
+    if current.returncode == 0:
+        for line in current.stdout.splitlines():
+            if 'image: ' in line:
+                file = Path(line.split('image: ', 1)[1])
+                if file.is_file():
+                    found.add(file.resolve())
+    return sorted((p for p in found if '\n' not in str(p)), key=lambda p: str(p).lower())
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('image', nargs='?', help='image path; quote paths containing spaces')
+    parser.add_argument('--random', action='store_true', help='choose a random wallpaper')
+    args = parser.parse_args()
+    if args.image and args.random:
+        parser.error('choose an image path OR --random')
+    if not shutil.which('awww'):
+        raise RuntimeError('awww is not installed.')
+    if not os.environ.get('WAYLAND_DISPLAY'):
+        raise RuntimeError('Run this command inside your Hyprland desktop.')
+    if args.image:
+        selected = Path(args.image).expanduser().resolve()
+        if not selected.is_file():
+            raise RuntimeError(f'Image not found: {selected}')
+    else:
+        choices = images()
+        if not choices:
+            raise RuntimeError('Add images to ~/.local/share/wallpapers or ~/Pictures/Wallpapers.')
+        if args.random:
+            selected = random.choice(choices)
+        else:
+            if not shutil.which('rofi'):
+                raise RuntimeError('Rofi is needed for the wallpaper picker.')
+            theme = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config')) / 'rofi/everforest/wallpaper.rasi'
+            labels = []
+            for image in choices:
+                name = image.stem.replace('_', ' ').replace('-', ' ')
+                name = name.replace('\x00', '').replace('\x1f', ' ')
+                labels.append(name + '\x00icon\x1f' + str(image))
+            menu = run('rofi', '-no-config', '-theme', str(theme),
+                       '-dmenu', '-sync', '-i', '-no-custom', '-format', 'i', '-show-icons',
+                       '-kb-custom-1', 'Control-r', '-p', '',
+                       '-theme-str', f'textbox-badge {{ content: "{len(choices)} WALLPAPERS"; }}',
+                       input='\n'.join(labels))
+            if menu.returncode == 10:
+                selected = random.choice(choices)
+            elif menu.returncode != 0:
+                return  # Closing the picker leaves the wallpaper untouched.
+            else:
+                try:
+                    index = int(menu.stdout.strip())
+                    if not 0 <= index < len(choices):
+                        raise ValueError()
+                    selected = choices[index]
+                except ValueError:
+                    raise RuntimeError('No valid wallpaper selected.')
+    if run('awww', 'query').returncode != 0:
+        subprocess.Popen(['awww-daemon'], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        for _ in range(30):
+            time.sleep(0.1)
+            if run('awww', 'query').returncode == 0:
+                break
+        else:
+            raise RuntimeError('Could not start the wallpaper daemon.')
+    applied = run('awww', 'img', str(selected), '--transition-type', 'fade',
+                  '--transition-duration', '0.6')
+    if applied.returncode:
+        raise RuntimeError(applied.stderr.strip() or 'Could not apply wallpaper.')
+    print(f'Wallpaper: {selected}')
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (RuntimeError, OSError) as error:
+        print(f'wallpaper: {error}', file=sys.stderr)
+        sys.exit(1)

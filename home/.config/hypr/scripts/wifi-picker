@@ -1,0 +1,310 @@
+#!/usr/bin/python
+"""Graphical NetworkManager Wi-Fi picker; passwords stay in libnm memory."""
+import getpass
+import subprocess
+import uuid
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('NM', '1.0')
+from gi.repository import Gtk, Gio, GLib, NM, Gdk
+
+APP_ID = 'local.everforest.WifiPicker'
+AP_SECURITY = getattr(NM, '80211ApSecurityFlags')
+AP_FLAGS = getattr(NM, '80211ApFlags')
+
+def ssid_of(ap):
+    value = ap.get_ssid()
+    return NM.utils_ssid_to_utf8(value.get_data()) if value else ''
+
+def security_of(ap):
+    flags = ap.get_rsn_flags() | ap.get_wpa_flags()
+    if flags & AP_SECURITY.KEY_MGMT_802_1X:
+        return 'Enterprise'
+    if flags & AP_SECURITY.KEY_MGMT_PSK:
+        return 'WPA/WPA2'
+    if flags & AP_SECURITY.KEY_MGMT_SAE:
+        return 'WPA3'
+    if flags & AP_SECURITY.KEY_MGMT_OWE:
+        return 'Enhanced open'
+    if ap.get_flags() & AP_FLAGS.PRIVACY:
+        return 'WEP'
+    return 'Open'
+
+class WifiWindow(Gtk.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title='Wi-Fi')
+        self.set_default_size(520, 560)
+        self.set_border_width(22)
+        self.client = NM.Client.new(None)
+        self.device = next((d for d in self.client.get_devices() if isinstance(d, NM.DeviceWifi)), None)
+        self.busy = False
+        self.selected = None
+        self.rows = Gtk.ListStore(str, str, str, object)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.add(box)
+        top = Gtk.Box(spacing=12)
+        title = Gtk.Label(); title.set_markup('<span size="x-large" weight="bold">Wi-Fi</span>')
+        top.pack_start(title, False, False, 0)
+        self.switch = Gtk.Switch(active=self.client.wireless_get_enabled())
+        self.switch.set_valign(Gtk.Align.CENTER)
+        self.switch.connect('notify::active', self.toggle_wifi)
+        top.pack_end(self.switch, False, False, 0)
+        box.pack_start(top, False, False, 0)
+        self.status = Gtk.Label(label='Choose a network below.')
+        self.status.set_xalign(0); self.status.set_line_wrap(True)
+        box.pack_start(self.status, False, False, 0)
+        self.tree = Gtk.TreeView(model=self.rows)
+        self.tree.set_headers_visible(True)
+        for i, text in enumerate(['Network', 'Signal', 'Security']):
+            col = Gtk.TreeViewColumn(text, Gtk.CellRendererText(), text=i)
+            col.set_expand(i == 0)
+            self.tree.append_column(col)
+        self.tree.get_selection().connect('changed', self.selection_changed)
+        self.tree.connect('row-activated', lambda *_: self.connect_network())
+        scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.tree); box.pack_start(scroll, True, True, 0)
+        self.password = Gtk.Entry()
+        self.password.set_visibility(False)
+        self.password.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        self.password.set_placeholder_text('Wi-Fi password')
+        self.password.connect('activate', lambda *_: self.connect_network())
+        self.password.set_no_show_all(True)
+        box.pack_start(self.password, False, False, 0)
+        self.show_password = Gtk.CheckButton(label='Show password')
+        self.show_password.set_no_show_all(True)
+        self.show_password.connect('toggled', lambda w: self.password.set_visibility(w.get_active()))
+        box.pack_start(self.show_password, False, False, 0)
+        buttons = Gtk.Box(spacing=8)
+        refresh = Gtk.Button(label='Refresh'); refresh.connect('clicked', lambda *_: self.scan())
+        self.disconnect = Gtk.Button(label='Disconnect'); self.disconnect.connect('clicked', self.disconnect_network)
+        self.connect_button = Gtk.Button(label='Connect'); self.connect_button.connect('clicked', lambda *_: self.connect_network())
+        buttons.pack_start(refresh, False, False, 0)
+        buttons.pack_end(self.connect_button, False, False, 0)
+        buttons.pack_end(self.disconnect, False, False, 0)
+        box.pack_start(buttons, False, False, 0)
+        advanced = Gtk.Button(label='Advanced network settings')
+        advanced.set_relief(Gtk.ReliefStyle.NONE)
+        advanced.connect('clicked', lambda *_: subprocess.Popen(['nm-connection-editor']))
+        box.pack_start(advanced, False, False, 0)
+        css = Gtk.CssProvider()
+        css.load_from_data(b'''
+window { background: #2d353b; color: #d3c6aa; }
+treeview, entry { background: #343f44; color: #d3c6aa; }
+treeview:selected { background: #475258; color: #a7c080; }
+button { border-radius: 8px; padding: 7px 10px; }
+entry { border-radius: 8px; padding: 9px; }
+switch:checked { background: #a7c080; }
+''')
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.client.connect('notify::wireless-enabled', self.radio_changed)
+        if self.device:
+            self.device.connect('state-changed', self.device_changed)
+            self.device.connect('notify::last-scan', lambda *_: self.refresh())
+        self.show_all()
+        self.refresh()
+        self.scan()
+        self.timer = GLib.timeout_add_seconds(5, self.periodic_refresh)
+        self.connect('destroy', lambda *_: GLib.source_remove(self.timer))
+
+    def say(self, text):
+        self.status.set_text(text)
+
+    def radio_changed(self, *_):
+        enabled = self.client.wireless_get_enabled()
+        if self.switch.get_active() != enabled:
+            self.switch.set_active(enabled)
+        self.refresh()
+
+    def toggle_wifi(self, switch, *_):
+        enabled = switch.get_active()
+        if self.client.wireless_get_enabled() != enabled:
+            self.client.wireless_set_enabled(enabled)
+        self.say('Wi-Fi enabled.' if enabled else 'Wi-Fi disabled.')
+        self.refresh()
+        if enabled:
+            GLib.timeout_add(700, self.delayed_scan)
+
+    def delayed_scan(self):
+        self.scan(); return GLib.SOURCE_REMOVE
+
+    def scan(self):
+        if not self.device or not self.client.wireless_get_enabled():
+            return
+        self.device.request_scan_async(None, self.scan_done)
+
+    def scan_done(self, device, result):
+        try:
+            device.request_scan_finish(result)
+        except GLib.Error:
+            pass  # NetworkManager throttles frequent scans; existing results remain usable.
+        self.refresh()
+
+    def periodic_refresh(self):
+        self.refresh(); return GLib.SOURCE_CONTINUE
+
+    def refresh(self):
+        if not self.device:
+            self.say('No Wi-Fi adapter found.')
+            self.connect_button.set_sensitive(False); self.disconnect.set_sensitive(False)
+            return
+        selected = ssid_of(self.selected) if self.selected else None
+        active = self.device.get_active_access_point()
+        active_path = active.get_path() if active else None
+        best = {}
+        for ap in self.device.get_access_points():
+            ssid = ssid_of(ap)
+            if not ssid:
+                continue
+            key = (ssid, security_of(ap))
+            old = best.get(key)
+            if old is None or ap.get_path() == active_path or (old.get_path() != active_path and ap.get_strength() > old.get_strength()):
+                best[key] = ap
+        # Prevent refresh from clearing the selected password field.
+        handler = self.tree.get_selection()
+        previous = self.selected
+        self.refreshing = True
+        self.rows.clear()
+        selected_iter = None
+        for (ssid, security), ap in sorted(best.items(), key=lambda item: (item[1].get_path() != active_path, -item[1].get_strength(), item[0][0])):
+            current = ap.get_path() == active_path
+            row = self.rows.append([('✓  ' if current else '') + ssid, str(ap.get_strength()) + '%', security, ap])
+            if ssid == selected:
+                selected_iter = row
+        if selected_iter is not None:
+            handler.select_iter(selected_iter)
+            self.selected = self.rows[selected_iter][3]
+        else:
+            self.selected = None
+        self.refreshing = False
+        if previous is not None and self.selected is None:
+            self.password.set_text(''); self.password.hide(); self.show_password.hide()
+        state = self.device.get_state()
+        self.disconnect.set_sensitive(not self.busy and self.device.get_active_connection() is not None)
+        self.connect_button.set_sensitive(not self.busy and self.selected is not None and self.client.wireless_get_enabled())
+        if not self.busy:
+            if not self.client.wireless_get_enabled(): self.say('Wi-Fi is off.')
+            elif state == NM.DeviceState.ACTIVATED and active: self.say('Connected to ' + ssid_of(active))
+
+    def saved_profile(self, ap):
+        for profile in self.device.get_available_connections():
+            wireless = profile.get_setting_wireless()
+            if wireless and wireless.get_ssid() and wireless.get_ssid().get_data() == ap.get_ssid().get_data() and ap.connection_valid(profile):
+                return profile
+        return None
+
+    def selection_changed(self, selection):
+        if getattr(self, 'refreshing', False): return
+        model, itr = selection.get_selected()
+        self.selected = model[itr][3] if itr is not None else None
+        self.password.set_text(''); self.show_password.set_active(False)
+        security = security_of(self.selected) if self.selected else 'Open'
+        protected = security in ('WPA/WPA2', 'WPA3', 'WEP')
+        self.password.set_visible(protected); self.show_password.set_visible(protected)
+        saved = self.saved_profile(self.selected) if self.selected else None
+        self.password.set_placeholder_text('Saved password — leave blank to reuse' if saved else 'Wi-Fi password')
+        self.connect_button.set_sensitive(self.selected is not None and not self.busy)
+        if protected and not saved: self.password.grab_focus()
+
+    def set_busy(self, busy):
+        self.busy = busy
+        self.tree.set_sensitive(not busy); self.password.set_sensitive(not busy)
+        self.switch.set_sensitive(not busy)
+        self.refresh()
+
+    def connect_network(self):
+        ap = self.selected
+        if not ap or self.busy: return
+        security = security_of(ap)
+        profile = self.saved_profile(ap)
+        password = self.password.get_text()
+        if security in ('Enterprise', 'WEP') and not profile:
+            self.say('Use Advanced network settings to configure this network.'); return
+        if security in ('WPA/WPA2', 'WPA3') and not password and not profile:
+            self.say('Enter the Wi-Fi password below.'); self.password.grab_focus(); return
+        if password and security in ('WPA/WPA2', 'WPA3'):
+            valid = 8 <= len(password) <= 63 or (len(password) == 64 and all(c in '0123456789abcdefABCDEF' for c in password))
+            if not valid:
+                self.say('Use an 8–63 character password, or a 64-digit hexadecimal key.'); return
+        self.set_busy(True); self.say('Connecting to ' + ssid_of(ap) + '…')
+        if profile and not password:
+            self.client.activate_connection_async(profile, self.device, ap.get_path(), None, self.activated)
+            return
+        connection = NM.SimpleConnection.new_clone(profile) if profile else NM.SimpleConnection.new()
+        if not profile:
+            identity = NM.SettingConnection.new()
+            identity.props.id = ssid_of(ap)
+            identity.props.uuid = str(uuid.uuid4())
+            identity.props.type = '802-11-wireless'
+            identity.add_permission('user', getpass.getuser(), None)
+            connection.add_setting(identity)
+            wireless = NM.SettingWireless.new(); wireless.props.ssid = ap.get_ssid(); wireless.props.mode = 'infrastructure'
+            connection.add_setting(wireless)
+        if security in ('WPA/WPA2', 'WPA3'):
+            setting = NM.SettingWirelessSecurity.new()
+            setting.props.key_mgmt = 'sae' if security == 'WPA3' else 'wpa-psk'
+            setting.props.psk = password
+            connection.add_setting(setting)
+        elif security == 'Enhanced open':
+            setting = NM.SettingWirelessSecurity.new(); setting.props.key_mgmt = 'owe'; connection.add_setting(setting)
+        if profile:
+            profile.update2(connection.to_dbus(NM.ConnectionSerializationFlags.ALL), NM.SettingsUpdate2Flags.TO_DISK, None, None,
+                            lambda obj, result: self.updated(obj, result, ap))
+        else:
+            self.client.add_and_activate_connection_async(connection, self.device, ap.get_path(), None, self.added)
+
+    def updated(self, profile, result, ap):
+        try:
+            profile.update2_finish(result)
+            self.client.activate_connection_async(profile, self.device, ap.get_path(), None, self.activated)
+        except GLib.Error as error: self.failed(error)
+
+    def activated(self, client, result):
+        try: client.activate_connection_finish(result)
+        except GLib.Error as error: self.failed(error)
+
+    def added(self, client, result):
+        try: client.add_and_activate_connection_finish(result)
+        except GLib.Error as error: self.failed(error)
+
+    def failed(self, error):
+        self.set_busy(False)
+        self.say('Could not connect. Check the password or try again.')
+
+    def device_changed(self, device, new_state, old_state, reason):
+        if new_state == NM.DeviceState.ACTIVATED:
+            self.password.set_text(''); self.set_busy(False)
+        elif new_state in (NM.DeviceState.FAILED, NM.DeviceState.DISCONNECTED):
+            if self.busy and new_state == NM.DeviceState.DISCONNECTED:
+                return  # Expected intermediate state while switching networks.
+            was_busy = self.busy
+            self.set_busy(False)
+            if was_busy and new_state == NM.DeviceState.FAILED:
+                self.say('Connection failed. Check the password and try again.')
+            elif new_state == NM.DeviceState.DISCONNECTED:
+                self.say('Disconnected. Select a network to connect.')
+        else: self.refresh()
+
+    def disconnect_network(self, *_):
+        active = self.device.get_active_connection() if self.device else None
+        if active:
+            self.client.deactivate_connection_async(active, None, self.disconnected)
+
+    def disconnected(self, client, result):
+        try:
+            client.deactivate_connection_finish(result)
+            self.say('Disconnected. Select a network to connect.')
+            self.refresh()
+        except GLib.Error:
+            self.say('Could not disconnect the network.')
+
+class WifiApplication(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID)
+        self.window = None
+    def do_activate(self):
+        if self.window is None:
+            self.window = WifiWindow(self)
+        self.window.present()
+
+if __name__ == '__main__':
+    WifiApplication().run(None)

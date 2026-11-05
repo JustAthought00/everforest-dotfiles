@@ -1,0 +1,4 @@
+# Personal desktop commands
+typeset -U path
+path=("$HOME/.local/bin" $path)
+export PATH

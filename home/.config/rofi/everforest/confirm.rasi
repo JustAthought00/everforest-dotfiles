@@ -1,0 +1,27 @@
+@import "base.rasi"
+configuration { show-icons: false;
+    }
+window { width: 520px;
+    }
+mainbox { children: [ "header", "message", "listview", "textbox-help" ];
+    }
+header { children: [ "textbox-heading" ];
+    }
+listview { lines: 1;
+    columns: 2;
+    layout: vertical;
+    fixed-columns: true;
+    spacing: 12px;
+    }
+element { padding: 16px;
+    }
+element-text { horizontal-align: 0.5;
+    }
+textbox-help { content: "Esc  Cancel";
+    }
+
+element { children: [ "element-text" ]; }
+
+textbox-heading {
+    content: "<b>Confirm action</b>&#10;<span size='small' foreground='#9da9a0'>Please confirm before continuing</span>";
+}
